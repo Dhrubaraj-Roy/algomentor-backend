@@ -9,6 +9,7 @@ const authRouter = require("./routes/auth");
 const problemRouter = require("./routes/problem");
 const submitCodeRouter = require("./routes/submitCode");
 const chatRouter = require("./routes/chat");
+const videoCreatorRouter = require("./routes/videoCreator");
 
 const app = express();
 
@@ -27,6 +28,8 @@ app.use("/", authRouter);
 app.use("/problem", problemRouter);
 app.use("/submit", submitCodeRouter);
 app.use("/chat", chatRouter);
+app.use("/video", videoCreatorRouter);
+app.use("/videoCreator", videoCreatorRouter);
 
 // Health check route
 app.get("/health", (req, res) => {

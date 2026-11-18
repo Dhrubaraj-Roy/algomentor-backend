@@ -28,6 +28,7 @@ TLDraw - https://www.tldraw.com/f/-1wZ1l0c492YWuhoW7-cT?d=v23.-15.1420.962.page
 ![Dotenv](https://img.shields.io/badge/.ENV-ECD53F?style=for-the-badge&logo=dotenv&logoColor=black)
 ![Axios](https://img.shields.io/badge/Axios-5A29E4?style=for-the-badge&logo=axios&logoColor=white)
 ![Nodemon](https://img.shields.io/badge/Nodemon-76D04B?style=for-the-badge&logo=nodemon&logoColor=white)
+![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=for-the-badge&logo=cloudinary&logoColor=white)
 
 ### AI & LLM Engine
 ![Groq](https://img.shields.io/badge/Groq_API-F05A28?style=for-the-badge&logo=fastapi&logoColor=white)
@@ -168,6 +169,17 @@ I am documenting my progress with dates as I build each part of the system step 
      - Enforces the **Rude DSA Teacher** persona: sarcastic, demanding, and blunt, roasting suboptimal $O(N^2)$ approaches and trivial questions while delivering 100% accurate Big-O analysis and algorithmic guidance.
   5. Maintained conversational history tracking (last 6 exchanges) for context retention across turns.
 
+### Milestone 14: Solution Video Uploading System with Cloudinary & Dynamic Thumbnails
+- Date: November 18, 2026
+- What I completed:
+  1. Integrated Cloudinary v2 SDK (`config/cloudinary.js`) for secure direct video storage and dynamic URL transformations.
+  2. Created the `Video` schema in `models/video.model.js` with `problemId` (unique), `userId`, `videoUrl`, `publicId`, `thumbnailUrl`, `duration`, `format`, and `bytes`.
+  3. Implemented `getUploadSignature` in `controllers/video.controller.js` to securely sign direct-to-Cloudinary upload requests with custom public ID naming conventions (`problem_<problemId>_<timestamp>`).
+  4. Implemented `saveVideometadata` to verify problem existence, enforce one solution video per problem, generate dynamic video thumbnails on the go using Cloudinary transformations, and save video records.
+  5. Implemented `deleteVideo` using Cloudinary's `destroy` command (`cloudinary.uploader.destroy(publicId, { resource_type: "video" })`) to purge cloud assets and remove MongoDB records.
+  6. Implemented `getVideoByProblemId` allowing authenticated users to fetch and watch solution videos by problem ID.
+  7. Created `routes/videoCreator.js` with admin protection (`userAuth` + `adminAuth`) on create, save, and delete routes, and mounted it in `index.js` under `/video` and `/videoCreator`.
+
 ---
 
 ## What I Built So Far
@@ -217,7 +229,19 @@ Created a Mongoose schema for code evaluation submissions with the following fie
 - compileOutput: String (compiler error logs or warnings, optional)
 - Compound indexes (`{ userId: 1, problemId: 1, createdAt: -1 }`, `{ userId: 1, problemId: 1 }`, and `{ createdAt: -1 }`) for fast sorted lookup of user submissions per problem.
 
-### 4. Problem Service & OnlineCompiler Judge0 API (utils/problem.service.js)
+### 4. Video Schema (models/video.model.js)
+Created a Mongoose schema for problem solution videos with the following fields:
+- problemId: ObjectId (reference to `Problem`, required, unique: true, indexed) — guarantees strictly one solution video per problem.
+- userId: ObjectId (reference to `User`, required) — the administrator who uploaded the video.
+- videoUrl: String (required, Cloudinary secure video playback URL).
+- publicId: String (required, unique, Cloudinary asset identifier required for deletion via the `destroy` command).
+- thumbnailUrl: String (Cloudinary on-the-fly generated poster image URL).
+- duration: Number (video runtime in seconds, default: 0).
+- format: String (e.g., `"mp4"`, `"webm"`).
+- bytes: Number (file size in bytes).
+- Timestamps (`createdAt`, `updatedAt`).
+
+### 5. Problem Service & OnlineCompiler Judge0 API (utils/problem.service.js)
 Created utility functions to interface with the code execution engine via Axios:
 - getLanguageById: Maps language names to compiler IDs (C++: 105, Python: 113).
 - submitBatch: Posts a batch of submissions to OnlineCompiler (`POST https://api.onlinecompiler.io/api/judge0/submissions/batch`).
@@ -295,6 +319,7 @@ This connects to MongoDB, finds the user by email, and sets their `role` to `"ad
   - Problem routes: `/problem` (`problemRouter`)
   - Submission routes: `/submit` (`submitCodeRouter`)
   - AI Chat routes: `/chat` (`chatRouter`)
+  - Video Solution routes: `/video` and `/videoCreator` (`videoCreatorRouter`)
 
 ### 13. AI DSA Teacher Engine (controllers/chat.controller.js & routes/chat.js)
 AI-powered tutoring service delivering algorithmic critiques, problem hints, and solution breakdowns:
@@ -307,6 +332,14 @@ AI-powered tutoring service delivering algorithmic critiques, problem hints, and
 - **Context Window Protection**: Automatically bounds problem descriptions and code snippets to 5,000 characters to prevent token overflows.
 - **Protected Route**: Secured with `userAuth` middleware to ensure only authenticated users can use API quota.
 
+### 14. Cloudinary Solution Video System (controllers/video.controller.js & routes/videoCreator.js)
+Scalable cloud video solution pipeline enforcing the **one problem, one solution video** architecture:
+- **`getUploadSignature`**: Generates a cryptographic digital signature using `cloudinary.utils.api_sign_request` and API secret, applying custom URL and asset naming styles (`problem_<problemId>_<timestamp>`).
+- **Direct Client Uploading**: Allows the frontend to stream large videos (up to 100 MB) directly to Cloudinary's infrastructure, entirely bypassing the Node.js server memory and bandwidth bottlenecks.
+- **`saveVideometadata`**: Validates problem existence, ensures duplicate video records cannot be created for the same problem, dynamically generates video thumbnails on the go via Cloudinary transformations (`format: "jpg"`, `so_auto`, `c_fill`), and persists video metadata.
+- **`deleteVideo`**: Permanently destroys the video asset using Cloudinary's `destroy` command (`cloudinary.uploader.destroy(publicId, { resource_type: "video" })`) and cleans up the database record.
+- **`getVideoByProblemId`**: Enables authenticated users to fetch and stream the solution video with creator metadata.
+
 ---
 
 ## Folder Structure
@@ -314,25 +347,29 @@ AI-powered tutoring service delivering algorithmic critiques, problem hints, and
 ```
 leetcode-clone/
 ├── config/
+│   ├── cloudinary.js
 │   ├── db.js
 │   └── redis.js
 ├── controllers/
 │   ├── chat.controller.js
 │   ├── problem.controller.js
 │   ├── submission.controller.js
-│   └── userAuth.js
+│   ├── userAuth.js
+│   └── video.controller.js
 ├── middleware/
 │   ├── adminAuth.js
 │   └── userAuth.js
 ├── models/
 │   ├── problem.model.js
 │   ├── submission.model.js
-│   └── user.js
+│   ├── user.js
+│   └── video.model.js
 ├── routes/
 │   ├── auth.js
 │   ├── chat.js
 │   ├── problem.js
-│   └── submitCode.js
+│   ├── submitCode.js
+│   └── videoCreator.js
 ├── scripts/
 │   └── makeAdmin.js
 ├── utils/
@@ -363,6 +400,9 @@ ONLINECOMPILER_API_KEY=your_onlinecompiler_api_key
 JUDGE0_URL=https://api.onlinecompiler.io/api/judge0
 CLIENT_URL=http://localhost:5173
 AI_CHAT_BOT=your_groq_api_key
+CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 ```
 
 ---
@@ -666,3 +706,107 @@ All problem creation and modification endpoints require both `userAuth` and `adm
 
 - DELETE /problem/delete/:id
   Deletes a problem by ID.
+
+---
+
+### 5. Video Solution Endpoints (videoCreator.js)
+
+#### Protected (Requires User Login)
+- GET /video/problem/:problemId (or `/video/:problemId`)
+  Fetches the single solution video available for a coding problem.
+  Header: `Cookie: token=...` or `Authorization: Bearer <token>`
+  Response:
+  ```json
+  {
+    "message": "Video fetched successfully.",
+    "problem": {
+      "id": "672461ab711b4650cab3ad31",
+      "title": "Two Sum",
+      "difficulty": "easy"
+    },
+    "video": {
+      "_id": "6734c2...",
+      "problemId": "672461ab711b4650cab3ad31",
+      "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/v1/leetcode/videos/problem_672461ab_1731916800.mp4",
+      "thumbnailUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/c_fill,h_450,w_800/so_auto/problem_672461ab_1731916800.jpg",
+      "publicId": "problem_672461ab_1731916800",
+      "duration": 345.5,
+      "format": "mp4",
+      "userId": {
+        "firstName": "Admin",
+        "lastName": "User",
+        "emailId": "admin@example.com"
+      }
+    }
+  }
+  ```
+
+#### Admin-Only (Requires Admin Login)
+- POST /video/create (or `/video/create-signature`)
+  Generates a secure Cloudinary digital signature and upload parameters for direct client-to-cloud video uploading.
+  Protected by: `userAuth` + `adminAuth` middlewares.
+  Header: `Cookie: token=...` or `Authorization: Bearer <token>`
+  Body (optional):
+  ```json
+  {
+    "problemId": "672461ab711b4650cab3ad31"
+  }
+  ```
+  Response:
+  ```json
+  {
+    "message": "Upload signature generated successfully.",
+    "signature": "927d031cec8441c09d5844b85bcaaefda6be70ba",
+    "timestamp": 1731916800,
+    "folder": "leetcode/videos",
+    "publicId": "problem_672461ab711b4650cab3ad31_1731916800",
+    "cloudName": "dt4k62cry",
+    "apiKey": "684288761461862",
+    "uploadUrl": "https://api.cloudinary.com/v1_1/dt4k62cry/video/upload"
+  }
+  ```
+
+- POST /video/save
+  Verifies problem existence, ensures only one solution video per problem, generates a video thumbnail on the go using Cloudinary transformations, and stores video metadata in MongoDB.
+  Protected by: `userAuth` + `adminAuth` middlewares.
+  Header: `Cookie: token=...` or `Authorization: Bearer <token>`
+  Body:
+  ```json
+  {
+    "problemId": "672461ab711b4650cab3ad31",
+    "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/v1/leetcode/videos/problem_672461ab_1731916800.mp4",
+    "publicId": "problem_672461ab711b4650cab3ad31_1731916800",
+    "duration": 345.5,
+    "format": "mp4",
+    "bytes": 15420394
+  }
+  ```
+  Response:
+  ```json
+  {
+    "message": "Solution video metadata saved successfully.",
+    "video": {
+      "_id": "6734c2...",
+      "problemId": "672461ab711b4650cab3ad31",
+      "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/...",
+      "thumbnailUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/c_fill,h_450,w_800/so_auto/problem_672461ab711b4650cab3ad31_1731916800.jpg",
+      "publicId": "problem_672461ab711b4650cab3ad31_1731916800"
+    }
+  }
+  ```
+
+- DELETE /video/delete/:id (or `DELETE /video/:id`)
+  Permanently deletes the video asset from Cloudinary using the `destroy` command and purges the record from MongoDB. Accepts either `videoId` or `problemId`.
+  Protected by: `userAuth` + `adminAuth` middlewares.
+  Header: `Cookie: token=...` or `Authorization: Bearer <token>`
+  Response:
+  ```json
+  {
+    "message": "Video deleted successfully from Cloudinary and database.",
+    "deletedVideoId": "6734c2...",
+    "problemId": "672461ab711b4650cab3ad31",
+    "cloudinaryResult": {
+      "result": "ok"
+    }
+  }
+  ```
