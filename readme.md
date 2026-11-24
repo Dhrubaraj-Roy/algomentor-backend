@@ -191,6 +191,7 @@ I am documenting my progress with dates as I build each part of the system step 
   6. Added polling fallback endpoint (`GET /submit/status/:submissionId`) for clients behind proxies blocking persistent streams.
   7. Updated `Problem` schema with `isVerified`, `verificationStatus`, and `verificationError`, adopting the non-destructive Draft/Verification pattern during problem creation.
   8. Configured graceful process shutdown (`SIGINT` / `SIGTERM`) in `index.js` to drain BullMQ workers cleanly without leaving zombie jobs.
+  9. Attached a non-fatal `'error'` event listener and exponential reconnection strategy to `redisClient` in `config/redis.js`, resolving the "Sudden Death" crash where Redis blips terminated the Node.js process.
 
 ---
 
@@ -324,8 +325,9 @@ This connects to MongoDB, finds the user by email, and sets their `role` to `"ad
 
 ### 12. Server Startup (index.js & config/)
 - `config/db.js`: Connects to MongoDB using Mongoose.
-- `config/redis.js`: Creates and exports the Redis client.
-- `index.js`: Connects to both MongoDB and Redis before the Express server starts listening for requests.
+- `config/redis.js`: Creates and exports the Redis client configured with an attached `'error'` event listener and exponential backoff `reconnectStrategy`, preventing unhandled error events from terminating the Node.js process during network hiccups.
+- `config/queue.js`: Configures BullMQ Redis queues (`submissionQueue` and `problemVerificationQueue`) and EventEmitter bus.
+- `index.js`: Connects to MongoDB and Redis, initializes BullMQ workers, and sets up graceful shutdown (`SIGINT`, `SIGTERM`) before listening on `PORT`.
 - Routers mounted:
   - Auth routes: `/` (`authRouter`)
   - Problem routes: `/problem` (`problemRouter`)
