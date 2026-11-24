@@ -84,6 +84,19 @@ const problemSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    verificationStatus: {
+      type: String,
+      enum: ["Pending", "Accepted", "Failed"],
+      default: "Pending",
+    },
+    verificationError: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,

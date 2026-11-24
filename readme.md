@@ -180,6 +180,18 @@ I am documenting my progress with dates as I build each part of the system step 
   6. Implemented `getVideoByProblemId` allowing authenticated users to fetch and watch solution videos by problem ID.
   7. Created `routes/videoCreator.js` with admin protection (`userAuth` + `adminAuth`) on create, save, and delete routes, and mounted it in `index.js` under `/video` and `/videoCreator`.
 
+### Milestone 15: Production-Ready Background Job Queue (BullMQ + Redis) & Real-Time SSE Streams
+- Date: November 24, 2026
+- What I completed:
+  1. Resolved the critical "Hanging Waiter" Trap (synchronous 15-second polling in HTTP handlers) in `controllers/submission.controller.js` and `controllers/problem.controller.js`.
+  2. Integrated BullMQ (`config/queue.js`) with Redis for asynchronous code evaluation (`submissionQueue`) and problem verification (`problemVerificationQueue`) with exponential backoff retries (`attempts: 3`).
+  3. Refactored `submitCode` to persist initial submissions as `"Pending"` in MongoDB and enqueue them into Redis, immediately returning `HTTP 202 Accepted` with `{ submissionId, status: "Queued" }` in ~20ms, completely eliminating HTTP 504 Gateway Timeouts.
+  4. Built `workers/submission.worker.js` and `workers/problem.worker.js` to process compilation and execution against Judge0 in isolated background processes with concurrency control (`concurrency: 5`).
+  5. Implemented Server-Sent Events (SSE) streaming endpoint (`GET /submit/events/:submissionId`) pushing real-time evaluation verdicts with periodic `: keep-alive` heartbeats to prevent proxy disconnection.
+  6. Added polling fallback endpoint (`GET /submit/status/:submissionId`) for clients behind proxies blocking persistent streams.
+  7. Updated `Problem` schema with `isVerified`, `verificationStatus`, and `verificationError`, adopting the non-destructive Draft/Verification pattern during problem creation.
+  8. Configured graceful process shutdown (`SIGINT` / `SIGTERM`) in `index.js` to drain BullMQ workers cleanly without leaving zombie jobs.
+
 ---
 
 ## What I Built So Far
@@ -349,6 +361,7 @@ leetcode-clone/
 ├── config/
 │   ├── cloudinary.js
 │   ├── db.js
+│   ├── queue.js
 │   └── redis.js
 ├── controllers/
 │   ├── chat.controller.js
@@ -375,6 +388,10 @@ leetcode-clone/
 ├── utils/
 │   ├── problem.service.js
 │   └── validator.js
+├── workers/
+│   ├── index.js
+│   ├── problem.worker.js
+│   └── submission.worker.js
 ├── .env
 ├── .env.example
 ├── .gitignore
@@ -594,7 +611,7 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
   ```
 
 - POST /submit/:problemId (or `POST /problem/solve/:problemId`)
-  Submits user code for real-time evaluation. The submission is persisted in the database as "Pending" first, then evaluated against all visible and hidden test cases on OnlineCompiler.
+  Submits user code for evaluation. The submission is persisted in MongoDB with status "Pending" first and enqueued onto a BullMQ asynchronous Redis job queue. Responds immediately in ~20ms with HTTP 202 Accepted to prevent reverse proxy HTTP 504 timeouts. A background worker evaluates the code and pushes the result via Server-Sent Events (SSE).
   Protected by: `userAuth` middleware.
   Body:
   ```json
@@ -603,13 +620,44 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
     "code": "import sys\n\ndef solve():\n    # your solution code\n    pass\n\nif __name__ == '__main__':\n    solve()"
   }
   ```
-  Response:
+  Response (HTTP 202 Accepted):
   ```json
   {
-    "message": "Code evaluated successfully",
+    "message": "Code submission queued for background evaluation",
+    "submissionId": "672462e78f9...",
+    "status": "Queued",
     "submission": {
       "id": "672462e78f9...",
-      "problemId": "6723... ",
+      "problemId": "6723...",
+      "status": "Pending",
+      "time": "0s",
+      "memory": "0 KB",
+      "testCasesPassed": 0,
+      "totalTestCases": 4,
+      "errorMessage": null,
+      "compileOutput": null
+    }
+  }
+  ```
+
+- GET /submit/events/:submissionId (or `GET /problem/solve/events/:submissionId`)
+  Real-time Server-Sent Events (SSE) streaming endpoint that pushes live evaluation results as soon as the BullMQ worker completes code execution.
+  Protected by: `userAuth` middleware.
+  SSE Stream output:
+  ```
+  data: {"status":"Accepted","submission":{"id":"672462e7...","status":"Accepted","time":"0.015s","memory":"1280 KB","testCasesPassed":4,"totalTestCases":4}}
+  ```
+
+- GET /submit/status/:submissionId (or `GET /problem/solve/status/:submissionId`)
+  Polling fallback endpoint to fetch the current status and evaluation result of a submission.
+  Protected by: `userAuth` middleware.
+  Response (HTTP 200 OK):
+  ```json
+  {
+    "status": "Accepted",
+    "submission": {
+      "id": "672462e78f9...",
+      "problemId": "6723...",
       "status": "Accepted",
       "time": "0.015s",
       "memory": "1280 KB",

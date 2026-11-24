@@ -5,6 +5,7 @@ require("dotenv").config();
 
 const connectDB = require("./config/db");
 const redisClient = require("./config/redis");
+const { initWorkers, closeWorkers } = require("./workers");
 const authRouter = require("./routes/auth");
 const problemRouter = require("./routes/problem");
 const submitCodeRouter = require("./routes/submitCode");
@@ -46,9 +47,36 @@ const startServer = async () => {
     await redisClient.connect();
     console.log("Redis connection established successfully.");
 
-    app.listen(PORT, () => {
+    initWorkers();
+    console.log("BullMQ background workers initialized successfully.");
+
+    const server = app.listen(PORT, () => {
       console.log(`Server is successfully listening on port ${PORT}...`);
     });
+
+    let isShuttingDown = false;
+    const gracefulShutdown = async (signal) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      console.log(`\nReceived ${signal}. Shutting down gracefully...`);
+      server.close(async () => {
+        try {
+          await closeWorkers();
+          console.log("BullMQ workers shut down.");
+          if (redisClient.isOpen) {
+            await redisClient.quit();
+            console.log("Redis client disconnected.");
+          }
+          process.exit(0);
+        } catch (err) {
+          console.error("Error during graceful shutdown:", err);
+          process.exit(1);
+        }
+      });
+    };
+
+    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
   } catch (err) {
     console.error("Server startup error:", err.message);
   }

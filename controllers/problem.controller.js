@@ -1,12 +1,8 @@
 const jwt = require("jsonwebtoken");
 const Problem = require("../models/problem.model");
 const { isValidObjectId } = require("../utils/validator");
-const {
-  getLanguageById,
-  submitBatch,
-  getBatchResults,
-  wait,
-} = require("../utils/problem.service");
+const { getLanguageById } = require("../utils/problem.service");
+const { problemVerificationQueue } = require("../config/queue");
 
 // Allowlist of safe fields exposed to public / non-admin viewers (Default Deny / Principle of Least Privilege)
 const PUBLIC_PROBLEM_FIELDS =
@@ -83,54 +79,7 @@ const createProblem = async (req, res) => {
       });
     }
 
-    const submitResult = await submitBatch(submissions);
-
-    // Extract tokens returned by OnlineCompiler / Judge0
-    const tokens = submitResult.map((item) => item.token);
-
-    // Fetch batch results
-    let testResult = await getBatchResults(tokens);
-
-    // Status ID 1: In Queue, Status ID 2: Processing
-    // Wait and poll every 1 second until compilation and execution finish
-    let attempts = 0;
-    const maxAttempts = 15; // Max 15 seconds
-
-    while (
-      testResult?.submissions?.some(
-        (s) => s.status.id === 1 || s.status.id === 2
-      ) &&
-      attempts < maxAttempts
-    ) {
-      attempts++;
-      await wait(1000); // Wait 1 second
-      testResult = await getBatchResults(tokens);
-    }
-
-    // Verify status IDs: every test case must have status.id === 3 (Accepted)
-    for (let i = 0; i < testResult.submissions.length; i++) {
-      const sub = testResult.submissions[i];
-      const statusId = sub.status.id;
-      const statusDesc = sub.status.description;
-
-      // Status 3 means Accepted
-      if (statusId !== 3) {
-        const failureReason = statusDesc || "Test case failed";
-        const errorDetail =
-          sub.compile_output || sub.stderr || sub.message || null;
-
-        return res.status(400).json({
-          message: `Reference solution verification failed: ${failureReason}`,
-          statusId,
-          statusDescription: statusDesc,
-          error: errorDetail,
-          failedTestCaseIndex: i % allTestCases.length,
-          submissionResult: sub,
-        });
-      }
-    }
-
-    // All test cases passed with status 3 (Accepted) -> Save problem to database
+    // Save problem to database immediately with pending verification status
     const problem = new Problem({
       title,
       description,
@@ -141,17 +90,25 @@ const createProblem = async (req, res) => {
       startCode: startCode || [],
       referenceSolution: refSolutions,
       problemCreator: req.user._id,
+      isVerified: false,
+      verificationStatus: "Pending",
     });
 
     await problem.save();
 
+    // Enqueue verification job to BullMQ background queue
+    // Decouples verification from HTTP request to prevent 15s synchronous socket hangs
+    await problemVerificationQueue.add("verify-problem", {
+      problemId: problem._id.toString(),
+    });
+
+    // Respond immediately in ~20ms
     res.status(201).json({
-      message: "Problem verified and created successfully",
+      message: "Problem created successfully and queued for background verification",
       problem,
       verification: {
         totalTestCases: submissions.length,
-        status: "Accepted",
-        allPassed: true,
+        status: "Queued",
       },
     });
   } catch (err) {

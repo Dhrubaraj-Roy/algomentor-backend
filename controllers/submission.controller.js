@@ -2,6 +2,7 @@ const Problem = require("../models/problem.model");
 const Submission = require("../models/submission.model");
 const User = require("../models/user");
 const { isValidObjectId } = require("../utils/validator");
+const { submissionQueue, submissionEvents } = require("../config/queue");
 const {
   getLanguageById,
   submitBatch,
@@ -96,110 +97,32 @@ const submitCode = async (req, res) => {
 
     await submission.save();
 
-    // 5. Construct batch submissions for OnlineCompiler
-    const submissions = allTestCases.map((tc) => ({
-      source_code: code,
-      language_id: languageId,
-      stdin: tc.input,
-      expected_output: tc.output,
-    }));
+    // 5. Enqueue evaluation job to BullMQ background queue
+    // Decouples evaluation from HTTP request to prevent synchronous socket hangs and 504 Gateway Timeouts
+    await submissionQueue.add("evaluate-submission", {
+      submissionId: submission._id.toString(),
+      problemId: problem._id.toString(),
+      userId: req.user._id.toString(),
+      code,
+      language: normalizedLang,
+      languageId,
+    });
 
-    // 6. Submit batch to OnlineCompiler
-    let submitResult;
-    try {
-      submitResult = await submitBatch(submissions);
-    } catch (judgeErr) {
-      submission.status = "Internal Error";
-      submission.errorMessage =
-        judgeErr.response?.data?.error || judgeErr.response?.data || judgeErr.message;
-      await submission.save();
-
-      return res.status(502).json({
-        message: "Compiler service error while submitting code.",
-        error: submission.errorMessage,
-        submissionId: submission._id,
-      });
-    }
-
-    const tokens = submitResult.map((item) => item.token);
-
-    // 7. Poll until compilation and execution complete
-    let testResult = await getBatchResults(tokens);
-    let attempts = 0;
-    const maxAttempts = 15; // Max 15 seconds
-
-    while (
-      testResult?.submissions?.some(
-        (s) => s.status.id === 1 || s.status.id === 2
-      ) &&
-      attempts < maxAttempts
-    ) {
-      attempts++;
-      await wait(1000);
-      testResult = await getBatchResults(tokens);
-    }
-
-    // 8. Analyze execution results across all test cases
-    let testCasesPassed = 0;
-    let finalStatus = "Accepted";
-    let maxTime = 0;
-    let maxMemory = 0;
-    let errorMessage = null;
-    let compileOutput = null;
-
-    for (let i = 0; i < testResult.submissions.length; i++) {
-      const sub = testResult.submissions[i];
-      const statusId = sub.status.id;
-      const statusDesc = sub.status.description;
-
-      // Track peak execution time and peak memory consumption
-      if (sub.time && parseFloat(sub.time) > maxTime) {
-        maxTime = parseFloat(sub.time);
-      }
-      if (sub.memory && parseInt(sub.memory, 10) > maxMemory) {
-        maxMemory = parseInt(sub.memory, 10);
-      }
-
-      if (statusId === 3) {
-        testCasesPassed++;
-      } else if (finalStatus === "Accepted") {
-        // First failing testcase determines the overall status verdict
-        finalStatus = mapJudge0Status(statusId, statusDesc);
-        errorMessage = sub.stderr || sub.message || null;
-        compileOutput = sub.compile_output || null;
-      }
-    }
-
-    // 9. Update the submission document in MongoDB
-    submission.status = finalStatus;
-    submission.time = maxTime;
-    submission.memory = maxMemory;
-    submission.testCasesPassed = testCasesPassed;
-    submission.errorMessage = errorMessage;
-    submission.compileOutput = compileOutput;
-
-    await submission.save();
-
-    // If the submission is Accepted, store unique problem ID in user's problemsSolved
-    if (finalStatus === "Accepted") {
-      await User.findByIdAndUpdate(req.user._id, {
-        $addToSet: { problemsSolved: problem._id },
-      });
-    }
-
-    // 10. Return evaluation response
-    res.status(200).json({
-      message: "Code evaluated successfully",
+    // 6. Return immediate 202 Accepted response in ~20ms
+    return res.status(202).json({
+      message: "Code submission queued for background evaluation",
+      submissionId: submission._id,
+      status: "Queued",
       submission: {
         id: submission._id,
         problemId: submission.problemId,
-        status: submission.status,
-        time: `${submission.time}s`,
-        memory: `${submission.memory} KB`,
-        testCasesPassed: submission.testCasesPassed,
+        status: "Pending",
+        time: "0s",
+        memory: "0 KB",
+        testCasesPassed: 0,
         totalTestCases: submission.totalTestCases,
-        errorMessage: submission.errorMessage,
-        compileOutput: submission.compileOutput,
+        errorMessage: null,
+        compileOutput: null,
         createdAt: submission.createdAt,
       },
     });
@@ -286,7 +209,7 @@ const runCode = async (req, res) => {
       return res.status(404).json({ message: "Problem not found." });
     }
 
-    // Run Code evaluates ONLY against visible (example) test cases
+    // Run Code evaluates ONLY against visible test cases
     const testCases = problem.visibleTestCases;
     if (!testCases || testCases.length === 0) {
       return res.status(400).json({
@@ -431,10 +354,138 @@ const getUserProblemSubmissions = async (req, res) => {
   }
 };
 
+/**
+ * Server-Sent Events (SSE) endpoint to push real-time evaluation updates to the client.
+ * GET /submit/events/:submissionId
+ */
+const getSubmissionStream = async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+
+    if (!submissionId || !isValidObjectId(submissionId)) {
+      return res.status(400).json({ message: "Invalid submission ID format." });
+    }
+
+    const submission = await Submission.findById(submissionId);
+    if (!submission) {
+      return res.status(404).json({ message: "Submission not found." });
+    }
+
+    // Ensure the requesting user owns the submission
+    if (submission.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Unauthorized access to submission events." });
+    }
+
+    // Configure headers for Server-Sent Events
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders();
+    }
+
+    // If the submission is already finalized, stream result and close connection
+    if (submission.status !== "Pending") {
+      res.write(
+        `data: ${JSON.stringify({
+          status: submission.status,
+          submission: {
+            id: submission._id,
+            problemId: submission.problemId,
+            status: submission.status,
+            time: `${submission.time}s`,
+            memory: `${submission.memory} KB`,
+            testCasesPassed: submission.testCasesPassed,
+            totalTestCases: submission.totalTestCases,
+            errorMessage: submission.errorMessage,
+            compileOutput: submission.compileOutput,
+            createdAt: submission.createdAt,
+          },
+        })}\n\n`
+      );
+      return res.end();
+    }
+
+    // Send initial pending event
+    res.write(
+      `data: ${JSON.stringify({
+        status: "Pending",
+        submissionId: submission._id,
+        message: "Submission is being evaluated by background worker...",
+      })}\n\n`
+    );
+
+    // Keep-alive heartbeat comment every 15s to keep proxy connections alive
+    const keepAlive = setInterval(() => {
+      res.write(": keep-alive\n\n");
+    }, 15000);
+
+    const eventName = `submission:${submissionId}`;
+    const onResult = (data) => {
+      clearInterval(keepAlive);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      res.end();
+    };
+
+    submissionEvents.once(eventName, onResult);
+
+    // Clean up when client disconnects or aborts
+    req.on("close", () => {
+      clearInterval(keepAlive);
+      submissionEvents.removeListener(eventName, onResult);
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * Polling fallback endpoint to fetch current status of a submission.
+ * GET /submit/status/:submissionId
+ */
+const getSubmissionStatus = async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+
+    if (!submissionId || !isValidObjectId(submissionId)) {
+      return res.status(400).json({ message: "Invalid submission ID format." });
+    }
+
+    const submission = await Submission.findById(submissionId);
+    if (!submission) {
+      return res.status(404).json({ message: "Submission not found." });
+    }
+
+    if (submission.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Unauthorized access to submission." });
+    }
+
+    res.status(200).json({
+      status: submission.status,
+      submission: {
+        id: submission._id,
+        problemId: submission.problemId,
+        status: submission.status,
+        time: `${submission.time}s`,
+        memory: `${submission.memory} KB`,
+        testCasesPassed: submission.testCasesPassed,
+        totalTestCases: submission.totalTestCases,
+        errorMessage: submission.errorMessage,
+        compileOutput: submission.compileOutput,
+        createdAt: submission.createdAt,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
 module.exports = {
   submitCode,
   runCode,
   getSolvedProblems,
   getUserProblemSubmissions,
+  getSubmissionStream,
+  getSubmissionStatus,
 };
 

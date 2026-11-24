@@ -12,6 +12,8 @@ const {
   submitCode,
   runCode,
   getSolvedProblems,
+  getSubmissionStream,
+  getSubmissionStatus,
 } = require("../controllers/submission.controller");
 
 const userAuth = require("../middleware/userAuth");
@@ -46,7 +48,12 @@ problemRouter.get("/:id", getProblemById);
 // Run code against example test cases (Requires User Login - No DB storage)
 problemRouter.post("/run/:problemId", userAuth, runCode);
 
-// Solve / Submit problem (Requires User Login)
+// Solve / Submit problem (Requires User Login - responds 202 Accepted via BullMQ)
 problemRouter.post("/solve/:problemId", userAuth, submitCode);
+
+// Live SSE evaluation stream & status polling under /problem
+problemRouter.get("/solve/status/:submissionId", userAuth, getSubmissionStatus);
+problemRouter.get("/solve/events/:submissionId", userAuth, getSubmissionStream);
+problemRouter.get("/solve/sse/:submissionId", userAuth, getSubmissionStream);
 
 module.exports = problemRouter;
