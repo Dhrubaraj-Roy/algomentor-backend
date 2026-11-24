@@ -192,6 +192,7 @@ I am documenting my progress with dates as I build each part of the system step 
   7. Updated `Problem` schema with `isVerified`, `verificationStatus`, and `verificationError`, adopting the non-destructive Draft/Verification pattern during problem creation.
   8. Configured graceful process shutdown (`SIGINT` / `SIGTERM`) in `index.js` to drain BullMQ workers cleanly without leaving zombie jobs.
   9. Attached a non-fatal `'error'` event listener and exponential reconnection strategy to `redisClient` in `config/redis.js`, resolving the "Sudden Death" crash where Redis blips terminated the Node.js process.
+  10. Fixed the "Rejected Cookie" Trap in `controllers/userAuth.js` by configuring dynamic cross-origin cookie security flags (`secure: true` and `sameSite: 'none'` in production; `sameSite: 'lax'` on localhost), ensuring cross-domain session persistence between frontend and backend hosts.
 
 ---
 

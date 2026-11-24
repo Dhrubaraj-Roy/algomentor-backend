@@ -9,6 +9,19 @@ const {
   isValidObjectId,
 } = require("../utils/validator");
 
+const isProduction = process.env.NODE_ENV === "production";
+
+// Production Cross-Origin Cookie Options:
+// - httpOnly: true prevents malicious scripts from accessing the session token (XSS defense)
+// - secure: true ensures cookies are only transmitted over encrypted HTTPS in production
+// - sameSite: 'none' permits cross-site cookie transmission between frontend (e.g. Vercel) and backend (e.g. Render); 'lax' for localhost
+const getCookieOptions = (extra = {}) => ({
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  ...extra,
+});
+
 // Register / Signup Controller
 const register = async (req, res) => {
   try {
@@ -45,10 +58,9 @@ const register = async (req, res) => {
       { expiresIn: "1h" }
     );
 
-    res.cookie("token", token, {
-      httpOnly: true,
+    res.cookie("token", token, getCookieOptions({
       maxAge: 60 * 60 * 1000, // 1 hour
-    });
+    }));
 
     res.status(201).json({
       message: "User registered successfully",
@@ -94,10 +106,9 @@ const login = async (req, res) => {
     );
 
     // 5. Store token in HTTP-only cookie (expires in 1 hour)
-    res.cookie("token", token, {
-      httpOnly: true,
+    res.cookie("token", token, getCookieOptions({
       maxAge: 60 * 60 * 1000, // 1 hour
-    });
+    }));
     
 
     res.status(200).json({
@@ -135,11 +146,10 @@ const logout = async (req, res) => {
       }
     }
 
-    // Clear token cookie
-    res.cookie("token", null, {
-      httpOnly: true,
+    // Clear token cookie with matching cross-origin security options
+    res.cookie("token", null, getCookieOptions({
       expires: new Date(Date.now()),
-    });
+    }));
 
     res.status(200).json({ message: "Logout successful" });
   } catch (err) {
@@ -224,7 +234,7 @@ const deleteProfile = async (req, res) => {
         }
       }
     }
-    res.clearCookie("token");
+    res.clearCookie("token", getCookieOptions());
 
     res.status(200).json({
       message: "Profile and all associated submissions deleted successfully.",
