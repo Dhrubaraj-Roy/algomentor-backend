@@ -194,6 +194,18 @@ I am documenting my progress with dates as I build each part of the system step 
   9. Attached a non-fatal `'error'` event listener and exponential reconnection strategy to `redisClient` in `config/redis.js`, resolving the "Sudden Death" crash where Redis blips terminated the Node.js process.
   10. Fixed the "Rejected Cookie" Trap in `controllers/userAuth.js` by configuring dynamic cross-origin cookie security flags (`secure: true` and `sameSite: 'none'` in production; `sameSite: 'lax'` on localhost), ensuring cross-domain session persistence between frontend and backend hosts.
 
+### Milestone 16: Distributed Redis Rate Limiting & Proxy Trust Hardening
+- Date: November 25, 2026
+- What I completed:
+  1. Installed `express-rate-limit` (`^8.7.5`) and built `middleware/rateLimiter.js` with a custom `RedisRateLimitStore` backed by the shared Redis client and an atomic Lua script (`INCR` + `PEXPIRE`/`PTTL`) for consistent rate-limit counters across multiple server instances.
+  2. Configured `createRateLimiter` with standard `RateLimit-*` headers, fail-open behavior (`passOnStoreError: true`) when Redis is temporarily unavailable, and uniform `429` JSON responses (`{ status: 429, message, retryAfter }`).
+  3. Implemented and mounted three dedicated rate limiters:
+     - `authRateLimiter` (10 requests / 15 min per IP, prefix `rl:auth:`) on `POST /register` and `POST /login` in `routes/auth.js`.
+     - `chatRateLimiter` (5 requests / 1 min per user ID with IP fallback, prefix `rl:chat:`) after `userAuth` on `POST /chat` and `POST /chat/chat` in `routes/chat.js`.
+     - `submissionRateLimiter` (15 requests / 1 min per user ID with IP fallback, prefix `rl:submission:`) after `userAuth` on `POST /submit/:problemId` in `routes/submitCode.js`.
+  4. Configured `app.set("trust proxy", ...)` in `index.js` (defaulting to `1` hop via `TRUST_PROXY` in `.env`) so `req.ip` resolves accurately behind reverse proxies without allowing IP spoofing.
+  5. Updated `handleChat` in `controllers/chat.controller.js` to propagate upstream `429` and `503` statuses from Groq instead of returning `500` for rate-limit or service-unavailable responses.
+
 ---
 
 ## What I Built So Far
@@ -302,6 +314,9 @@ Created helper functions to validate incoming request data before hitting the da
   1. Runs after `userAuth`.
   2. Verifies that `req.user.role === "admin"`.
   3. If not an admin, rejects with a `403 Forbidden` response.
+- `middleware/rateLimiter.js`:
+  1. Implements `RedisRateLimitStore` using an atomic Lua script (`INCR` + `PEXPIRE`/`PTTL`) so counters are shared across Node.js instances, with `passOnStoreError: true` to fail open if Redis is unavailable.
+  2. Exports `authRateLimiter` (10 req / 15 min per IP for `/register` and `/login`), `chatRateLimiter` (5 req / 1 min per user for `/chat`), and `submissionRateLimiter` (15 req / 1 min per user for `POST /submit/:problemId`).
 
 ### 10. Why and How Redis Token Blacklisting Works
 JWT tokens are stateless. When a user logs out, simply deleting the cookie from their browser doesn't invalidate the token itself. If someone had copied that token, they could still make requests until it expired.
@@ -328,7 +343,7 @@ This connects to MongoDB, finds the user by email, and sets their `role` to `"ad
 - `config/db.js`: Connects to MongoDB using Mongoose.
 - `config/redis.js`: Creates and exports the Redis client configured with an attached `'error'` event listener and exponential backoff `reconnectStrategy`, preventing unhandled error events from terminating the Node.js process during network hiccups.
 - `config/queue.js`: Configures BullMQ Redis queues (`submissionQueue` and `problemVerificationQueue`) and EventEmitter bus.
-- `index.js`: Connects to MongoDB and Redis, initializes BullMQ workers, and sets up graceful shutdown (`SIGINT`, `SIGTERM`) before listening on `PORT`.
+- `index.js`: Configures `trust proxy` (default `1` hop via `TRUST_PROXY`), connects to MongoDB and Redis, initializes BullMQ workers, and sets up graceful shutdown (`SIGINT`, `SIGTERM`) before listening on `PORT`.
 - Routers mounted:
   - Auth routes: `/` (`authRouter`)
   - Problem routes: `/problem` (`problemRouter`)
@@ -374,6 +389,7 @@ leetcode-clone/
 │   └── video.controller.js
 ├── middleware/
 │   ├── adminAuth.js
+│   ├── rateLimiter.js
 │   └── userAuth.js
 ├── models/
 │   ├── problem.model.js
@@ -423,6 +439,7 @@ AI_CHAT_BOT=your_groq_api_key
 CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
 CLOUDINARY_API_KEY=your_cloudinary_api_key
 CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+TRUST_PROXY=1
 ```
 
 ---
@@ -433,7 +450,7 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
 #### Public
 - POST /register
-  Registers a new regular user account (role is always strictly `"user"`).
+  Registers a new regular user account (role is always strictly `"user"`). Rate-limited to 10 requests per 15 minutes per IP (`authRateLimiter`).
   Body:
   ```json
   {
@@ -445,7 +462,7 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
   ```
 
 - POST /login
-  Authenticates a user and sets an HTTP-only cookie with the JWT (valid for 1 hour). Returns user details including their `role`.
+  Authenticates a user and sets an HTTP-only cookie with the JWT (valid for 1 hour). Returns user details including their `role`. Rate-limited to 10 requests per 15 minutes per IP (`authRateLimiter`).
   Body:
   ```json
   {
@@ -615,7 +632,7 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
 - POST /submit/:problemId (or `POST /problem/solve/:problemId`)
   Submits user code for evaluation. The submission is persisted in MongoDB with status "Pending" first and enqueued onto a BullMQ asynchronous Redis job queue. Responds immediately in ~20ms with HTTP 202 Accepted to prevent reverse proxy HTTP 504 timeouts. A background worker evaluates the code and pushes the result via Server-Sent Events (SSE).
-  Protected by: `userAuth` middleware.
+  Protected by: `userAuth` + `submissionRateLimiter` (15 requests per minute per user on `/submit/:problemId`).
   Body:
   ```json
   {
@@ -673,8 +690,8 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
   ```
 
 - POST /chat
-  Communicates with the Rude DSA Teacher AI chatbot. Enforces user authentication and injects active problem context (title, description) and student's Monaco editor code dynamically into the system prompt.
-  Protected by: `userAuth` middleware.
+  Communicates with the Rude DSA Teacher AI chatbot. Enforces user authentication and injects active problem context (title, description) and student's Monaco editor code dynamically into the system prompt. Propagates upstream `429`/`503` statuses cleanly.
+  Protected by: `userAuth` + `chatRateLimiter` (5 requests per minute per user).
   Body:
   ```json
   {

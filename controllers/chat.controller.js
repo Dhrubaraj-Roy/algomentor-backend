@@ -188,13 +188,21 @@ const handleChat = async (req, res) => {
     });
   } catch (err) {
     console.error("Chat error:", err.response?.data || err.message);
+    const upstreamStatus = err.response?.status;
     const errorMessage =
       err.response?.data?.error?.message ||
       err.message ||
       "Failed to process chat message.";
 
-    return res.status(500).json({
-      message: errorMessage,
+    const statusCode =
+      upstreamStatus === 429 ? 429 : upstreamStatus === 503 ? 503 : 500;
+
+    return res.status(statusCode).json({
+      status: statusCode,
+      message:
+        statusCode === 429
+          ? "AI provider rate limit reached. Please wait a moment and retry."
+          : errorMessage,
     });
   }
 };

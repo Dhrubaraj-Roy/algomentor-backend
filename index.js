@@ -14,6 +14,23 @@ const videoCreatorRouter = require("./routes/videoCreator");
 
 const app = express();
 
+// Configure trust proxy dynamically:
+// - In production behind a reverse proxy (Render, Heroku, AWS, Nginx), trust proxy hops (default 1).
+// - In local development, default to false to prevent header spoofing.
+// - Supports explicit booleans ('true'/'false'), numbers (1, 2, ...), or string presets ('loopback').
+const parseTrustProxy = (val) => {
+  if (val === undefined || val === null || val === "") {
+    return process.env.NODE_ENV === "production" ? 1 : false;
+  }
+  const normalized = String(val).trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  const num = Number(normalized);
+  return Number.isNaN(num) ? val : num;
+};
+
+app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY));
+
 // Middlewares
 app.use(
   cors({

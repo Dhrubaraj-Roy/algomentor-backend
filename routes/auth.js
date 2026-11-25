@@ -10,15 +10,20 @@ const {
 } = require("../controllers/userAuth");
 const userAuth = require("../middleware/userAuth");
 const adminAuth = require("../middleware/adminAuth");
+const {
+  authRateLimiter,
+  loginIpRateLimiter,
+  loginAccountRateLimiter,
+} = require("../middleware/rateLimiter");
 
 // Check Auth (gracefully returns auth status: true/false without throwing 401)
 authRouter.get("/check", checkAuth);
 
-// Register (role is always user)
-authRouter.post("/register", register);
+// Register (role is always user - rate-limited to 20 per 15 mins per IP)
+authRouter.post("/register", authRateLimiter, register);
 
-// Login
-authRouter.post("/login", login);
+// Login (layered IP + per-account failed-attempt rate limiters)
+authRouter.post("/login", loginIpRateLimiter, loginAccountRateLimiter, login);
 
 // Logout (protected with userAuth middleware)
 authRouter.post("/logout", userAuth, logout);
