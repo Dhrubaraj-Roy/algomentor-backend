@@ -228,6 +228,12 @@ I am documenting my progress with dates as I build each part of the system step 
   2. Configured `express.json({ limit: "1mb" })` to block oversized JSON payloads from exhausting Node.js memory.
   3. Added an explicit `entity.too.large` branch in the global error middleware to return a clean `413` JSON response when payloads exceed 1MB.
 
+### Milestone 20: Password Projection Hardening (`middleware/userAuth.js` & Controllers)
+- Date: November 26, 2026
+- What I completed:
+  1. Updated `middleware/userAuth.js` to project `.select("-password")` on `User.findById(...)` so hashed passwords are never loaded onto `req.user` or exposed on routes like `GET /profile`.
+  2. Added `.select("-password")` to non-login user lookups in `controllers/userAuth.js` (`deleteProfile`, `checkAuth`) and `controllers/submission.controller.js` (`getSolvedProblems`).
+
 ---
 
 ## What I Built So Far
@@ -331,7 +337,7 @@ Created helper functions to validate incoming request data before hitting the da
   1. Reads the token from either the HTTP-only cookie or the `Authorization: Bearer <token>` header.
   2. Checks Redis to see if the token is blacklisted. If blacklisted, rejects the request immediately.
   3. Verifies the JWT token using `JWT_SECRET`.
-  4. Finds the user in MongoDB by ID.
+  4. Finds the user in MongoDB by ID while excluding the hashed password (`.select("-password")`).
   5. Attaches `user` and `token` to the request object (`req.user`, `req.token`) and calls `next()`.
 - `middleware/adminAuth.js`:
   1. Runs after `userAuth`.

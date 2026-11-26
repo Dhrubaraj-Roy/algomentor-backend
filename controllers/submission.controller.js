@@ -137,10 +137,12 @@ const submitCode = async (req, res) => {
  */
 const getSolvedProblems = async (req, res) => {
   try {
-    let user = await User.findById(req.user._id).populate({
-      path: "problemsSolved",
-      select: "_id title difficulty tags",
-    });
+    let user = await User.findById(req.user._id)
+      .select("-password")
+      .populate({
+        path: "problemsSolved",
+        select: "_id title difficulty tags",
+      });
 
     // Auto-sync with Submission history in case of any prior Accepted submissions
     const distinctProblemIds = await Submission.find({
@@ -156,10 +158,12 @@ const getSolvedProblems = async (req, res) => {
         req.user._id,
         { $addToSet: { problemsSolved: { $each: distinctProblemIds } } },
         { new: true }
-      ).populate({
-        path: "problemsSolved",
-        select: "_id title difficulty tags",
-      });
+      )
+        .select("-password")
+        .populate({
+          path: "problemsSolved",
+          select: "_id title difficulty tags",
+        });
     }
 
     res.status(200).json({

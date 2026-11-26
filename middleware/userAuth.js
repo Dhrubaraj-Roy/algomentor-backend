@@ -23,8 +23,8 @@ const userAuth = async (req, res, next) => {
       process.env.JWT_SECRET
     );
 
-    // 4. Find user in database
-    const user = await User.findById(decodedObj._id);
+    // 4. Find user in database (exclude hashed password from req.user)
+    const user = await User.findById(decodedObj._id).select("-password");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }

@@ -207,7 +207,7 @@ const deleteProfile = async (req, res) => {
     const userId = req.user._id;
 
     // Check if target user exists in database
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select("-password");
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
@@ -275,7 +275,7 @@ const checkAuth = async (req, res) => {
     const decodedObj = jwt.verify(token, process.env.JWT_SECRET);
 
     // Find user in database
-    const user = await User.findById(decodedObj._id);
+    const user = await User.findById(decodedObj._id).select("-password");
     if (!user) {
       return res.status(200).json({
         authenticated: false,
