@@ -206,6 +206,13 @@ I am documenting my progress with dates as I build each part of the system step 
   4. Configured `app.set("trust proxy", ...)` in `index.js` (defaulting to `1` hop via `TRUST_PROXY` in `.env`) so `req.ip` resolves accurately behind reverse proxies without allowing IP spoofing.
   5. Updated `handleChat` in `controllers/chat.controller.js` to propagate upstream `429` and `503` statuses from Groq instead of returning `500` for rate-limit or service-unavailable responses.
 
+### Milestone 17: Problem Collection Indexing (`models/problem.model.js`)
+- Date: November 26, 2026
+- What I completed:
+  1. Added compound index `{ difficulty: 1, tags: 1 }` on `problemSchema` to eliminate full collection scans (`COLLSCAN`) when filtering problems by `difficulty` alone or `difficulty` + `tags`.
+  2. Added multikey index `{ tags: 1 }` to serve tag-only filter queries efficiently without `difficulty` as a leading prefix.
+  3. Added text index `{ title: "text" }` to support keyword search on problem titles.
+
 ---
 
 ## What I Built So Far
@@ -239,6 +246,7 @@ Created a Mongoose schema for coding problems with the following fields:
   - language: String (e.g., `"python"`, `"cpp"`)
   - completeCode: String
 - problemCreator: ObjectId (reference to `User`, required)
+- Indexes: `{ difficulty: 1, tags: 1 }` (compound), `{ tags: 1 }` (multikey), and `{ title: "text" }` (text search) to prevent full collection scans on filtered and search queries.
 
 ### 3. Submission Schema (models/submission.model.js)
 Created a Mongoose schema for code evaluation submissions with the following fields:

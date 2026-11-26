@@ -103,6 +103,13 @@ const problemSchema = new mongoose.Schema(
   }
 );
 
+// Compound index for filtering by difficulty alone or difficulty + tag
+problemSchema.index({ difficulty: 1, tags: 1 });
+// Multikey index for filtering by tag alone (without difficulty)
+problemSchema.index({ tags: 1 });
+// Text index for keyword search on problem titles
+problemSchema.index({ title: "text" });
+
 const Problem = mongoose.model("Problem", problemSchema);
 
 module.exports = Problem;
