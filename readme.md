@@ -221,6 +221,13 @@ I am documenting my progress with dates as I build each part of the system step 
   3. Registered process-level `uncaughtException` and `unhandledRejection` handlers and unified graceful shutdown (`shutdown`) across `SIGINT`, `SIGTERM`, and `unhandledRejection`, draining HTTP connections, BullMQ workers, Redis, and Mongoose with a 5-second timeout fallback.
   4. Updated `startServer()` to exit with `process.exit(1)` on startup failure instead of leaving a dead zombie process running.
 
+### Milestone 19: Security Headers (`helmet`) & Request Body Size Limits (`index.js`)
+- Date: November 26, 2026
+- What I completed:
+  1. Installed `helmet` (`^8.3.0`) and mounted `app.use(helmet())` in `index.js` to strip `X-Powered-By` and enforce HTTP security headers (clickjacking, MIME-type sniffing protection, etc.).
+  2. Configured `express.json({ limit: "1mb" })` to block oversized JSON payloads from exhausting Node.js memory.
+  3. Added an explicit `entity.too.large` branch in the global error middleware to return a clean `413` JSON response when payloads exceed 1MB.
+
 ---
 
 ## What I Built So Far
@@ -359,7 +366,7 @@ This connects to MongoDB, finds the user by email, and sets their `role` to `"ad
 - `config/db.js`: Connects to MongoDB using Mongoose.
 - `config/redis.js`: Creates and exports the Redis client configured with an attached `'error'` event listener and exponential backoff `reconnectStrategy`, preventing unhandled error events from terminating the Node.js process during network hiccups.
 - `config/queue.js`: Configures BullMQ Redis queues (`submissionQueue` and `problemVerificationQueue`) and EventEmitter bus.
-- `index.js`: Configures `trust proxy` (`parseTrustProxy`), connects to MongoDB and Redis, initializes BullMQ workers, mounts the global 4-argument Express error-handling middleware, fails fast (`process.exit(1)`) on startup errors, and handles `uncaughtException`, `unhandledRejection`, `SIGINT`, and `SIGTERM` with unified graceful shutdown before listening on `PORT`.
+- `index.js`: Configures `trust proxy` (`parseTrustProxy`), applies `helmet()` security headers and `express.json({ limit: "1mb" })` payload limits, connects to MongoDB and Redis, initializes BullMQ workers, mounts the global 4-argument Express error-handling middleware (handling `400` malformed JSON and `413` oversized payloads), fails fast (`process.exit(1)`) on startup errors, and handles `uncaughtException`, `unhandledRejection`, `SIGINT`, and `SIGTERM` with unified graceful shutdown before listening on `PORT`.
 - Routers mounted:
   - Auth routes: `/` (`authRouter`)
   - Problem routes: `/problem` (`problemRouter`)

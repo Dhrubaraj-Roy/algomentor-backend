@@ -1,6 +1,7 @@
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
+const helmet = require("helmet");
 const mongoose = require("mongoose");
 require("dotenv").config();
 
@@ -33,13 +34,14 @@ const parseTrustProxy = (val) => {
 app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY));
 
 // Middlewares
+app.use(helmet());
 app.use(
   cors({
     origin: process.env.CLIENT_URL || "http://localhost:5173",
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
 // Routes
@@ -67,6 +69,13 @@ app.use((err, req, res, next) => {
     return res.status(400).json({
       status: 400,
       message: "Invalid JSON payload in request body.",
+    });
+  }
+
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({
+      status: 413,
+      message: "Request payload exceeds the 1MB limit.",
     });
   }
 
