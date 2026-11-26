@@ -213,6 +213,14 @@ I am documenting my progress with dates as I build each part of the system step 
   2. Added multikey index `{ tags: 1 }` to serve tag-only filter queries efficiently without `difficulty` as a leading prefix.
   3. Added text index `{ title: "text" }` to support keyword search on problem titles.
 
+### Milestone 18: Global Error Handling & Process Crash Protection (`index.js`)
+- Date: November 26, 2026
+- What I completed:
+  1. Added a centralized 4-argument Express error-handling middleware (`app.use((err, req, res, next) => ...)`) after all routes so unhandled errors and malformed JSON payloads (`entity.parse.failed`) return clean JSON responses instead of hanging requests.
+  2. Masked internal `5xx` error messages when `NODE_ENV === "production"` and delegated to `next(err)` when `res.headersSent` is already true.
+  3. Registered process-level `uncaughtException` and `unhandledRejection` handlers and unified graceful shutdown (`shutdown`) across `SIGINT`, `SIGTERM`, and `unhandledRejection`, draining HTTP connections, BullMQ workers, Redis, and Mongoose with a 5-second timeout fallback.
+  4. Updated `startServer()` to exit with `process.exit(1)` on startup failure instead of leaving a dead zombie process running.
+
 ---
 
 ## What I Built So Far
@@ -351,7 +359,7 @@ This connects to MongoDB, finds the user by email, and sets their `role` to `"ad
 - `config/db.js`: Connects to MongoDB using Mongoose.
 - `config/redis.js`: Creates and exports the Redis client configured with an attached `'error'` event listener and exponential backoff `reconnectStrategy`, preventing unhandled error events from terminating the Node.js process during network hiccups.
 - `config/queue.js`: Configures BullMQ Redis queues (`submissionQueue` and `problemVerificationQueue`) and EventEmitter bus.
-- `index.js`: Configures `trust proxy` (default `1` hop via `TRUST_PROXY`), connects to MongoDB and Redis, initializes BullMQ workers, and sets up graceful shutdown (`SIGINT`, `SIGTERM`) before listening on `PORT`.
+- `index.js`: Configures `trust proxy` (`parseTrustProxy`), connects to MongoDB and Redis, initializes BullMQ workers, mounts the global 4-argument Express error-handling middleware, fails fast (`process.exit(1)`) on startup errors, and handles `uncaughtException`, `unhandledRejection`, `SIGINT`, and `SIGTERM` with unified graceful shutdown before listening on `PORT`.
 - Routers mounted:
   - Auth routes: `/` (`authRouter`)
   - Problem routes: `/problem` (`problemRouter`)

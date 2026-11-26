@@ -1,6 +1,7 @@
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
+const mongoose = require("mongoose");
 require("dotenv").config();
 
 const connectDB = require("./config/db");
@@ -54,7 +55,91 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "OK", message: "Server is healthy" });
 });
 
+// Global error-handling middleware (4 arguments required by Express)
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  console.error("Unhandled Express error:", err);
+
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      status: 400,
+      message: "Invalid JSON payload in request body.",
+    });
+  }
+
+  const statusCode = err.statusCode || err.status || 500;
+  const isProduction = process.env.NODE_ENV === "production";
+  const message =
+    statusCode >= 500 && isProduction
+      ? "Internal server error."
+      : err.message || "Internal server error.";
+
+  return res.status(statusCode).json({
+    status: statusCode,
+    message,
+  });
+});
+
 const PORT = process.env.PORT || 3000;
+
+let server = null;
+let isShuttingDown = false;
+
+const shutdown = async (reason, exitCode = 0) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\nReceived ${reason}. Shutting down gracefully...`);
+
+  // Ensure process exits even if open sockets hang during shutdown
+  const forceExitTimer = setTimeout(() => {
+    console.error("Forced exit after shutdown timeout.");
+    process.exit(exitCode || 1);
+  }, 5000);
+  forceExitTimer.unref();
+
+  const cleanup = async () => {
+    try {
+      await closeWorkers();
+      console.log("BullMQ workers shut down.");
+      if (redisClient.isOpen) {
+        await redisClient.quit();
+        console.log("Redis client disconnected.");
+      }
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.connection.close();
+        console.log("MongoDB connection closed.");
+      }
+      clearTimeout(forceExitTimer);
+      process.exit(exitCode);
+    } catch (err) {
+      console.error("Error during graceful shutdown:", err);
+      clearTimeout(forceExitTimer);
+      process.exit(1);
+    }
+  };
+
+  if (server) {
+    server.close(cleanup);
+  } else {
+    await cleanup();
+  }
+};
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled Promise Rejection:", reason);
+  shutdown("unhandledRejection", 1);
+});
+
+process.on("SIGINT", () => shutdown("SIGINT", 0));
+process.on("SIGTERM", () => shutdown("SIGTERM", 0));
 
 const startServer = async () => {
   try {
@@ -67,35 +152,12 @@ const startServer = async () => {
     initWorkers();
     console.log("BullMQ background workers initialized successfully.");
 
-    const server = app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`Server is successfully listening on port ${PORT}...`);
     });
-
-    let isShuttingDown = false;
-    const gracefulShutdown = async (signal) => {
-      if (isShuttingDown) return;
-      isShuttingDown = true;
-      console.log(`\nReceived ${signal}. Shutting down gracefully...`);
-      server.close(async () => {
-        try {
-          await closeWorkers();
-          console.log("BullMQ workers shut down.");
-          if (redisClient.isOpen) {
-            await redisClient.quit();
-            console.log("Redis client disconnected.");
-          }
-          process.exit(0);
-        } catch (err) {
-          console.error("Error during graceful shutdown:", err);
-          process.exit(1);
-        }
-      });
-    };
-
-    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
   } catch (err) {
-    console.error("Server startup error:", err.message);
+    console.error("Server startup error:", err);
+    process.exit(1);
   }
 };
 
