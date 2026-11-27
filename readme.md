@@ -1,6 +1,6 @@
-# LeetCode Clone
+# AlgoMentor
 
-This is a full-stack LeetCode clone project that I am building step by step from scratch. It will include the complete frontend, backend, database, and code evaluation system.
+AlgoMentor is a full-stack coding practice, real-time code evaluation, and AI-guided DSA mentoring platform built step by step from scratch. It includes the backend API, asynchronous code judging workers, database persistence, video explanations, and AI tutoring.
 
 Architecture Diagram:
 TLDraw - https://www.tldraw.com/f/-1wZ1l0c492YWuhoW7-cT?d=v23.-15.1420.962.page
@@ -404,7 +404,7 @@ Scalable cloud video solution pipeline enforcing the **one problem, one solution
 ## Folder Structure
 
 ```
-leetcode-clone/
+Algo Mentor backend/
 ├── config/
 │   ├── cloudinary.js
 │   ├── db.js
@@ -456,7 +456,7 @@ Create a `.env` file in the root directory with the following variables:
 
 ```
 PORT=3000
-MONGO_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/leetcode-clone
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/algomentor
 JWT_SECRET=your_jwt_secret_key
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
@@ -824,7 +824,7 @@ All problem creation and modification endpoints require both `userAuth` and `adm
     "video": {
       "_id": "6734c2...",
       "problemId": "672461ab711b4650cab3ad31",
-      "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/v1/leetcode/videos/problem_672461ab_1731916800.mp4",
+      "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/v1/algomentor/videos/problem_672461ab_1731916800.mp4",
       "thumbnailUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/c_fill,h_450,w_800/so_auto/problem_672461ab_1731916800.jpg",
       "publicId": "problem_672461ab_1731916800",
       "duration": 345.5,
@@ -855,7 +855,7 @@ All problem creation and modification endpoints require both `userAuth` and `adm
     "message": "Upload signature generated successfully.",
     "signature": "927d031cec8441c09d5844b85bcaaefda6be70ba",
     "timestamp": 1731916800,
-    "folder": "leetcode/videos",
+    "folder": "algomentor/videos",
     "publicId": "problem_672461ab711b4650cab3ad31_1731916800",
     "cloudName": "dt4k62cry",
     "apiKey": "684288761461862",
@@ -871,7 +871,7 @@ All problem creation and modification endpoints require both `userAuth` and `adm
   ```json
   {
     "problemId": "672461ab711b4650cab3ad31",
-    "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/v1/leetcode/videos/problem_672461ab_1731916800.mp4",
+    "videoUrl": "https://res.cloudinary.com/dt4k62cry/video/upload/v1/algomentor/videos/problem_672461ab_1731916800.mp4",
     "publicId": "problem_672461ab711b4650cab3ad31_1731916800",
     "duration": 345.5,
     "format": "mp4",

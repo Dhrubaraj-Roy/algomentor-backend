@@ -11,9 +11,9 @@ const { isValidObjectId } = require("../utils/validator");
 const getUploadSignature = async (req, res) => {
   try {
     const timestamp = Math.round(Date.now() / 1000);
-    const folder = "leetcode/videos";
+    const folder = "algomentor/videos";
 
-    // Custom URL/public_id style: leetcode_video_<problemId>_<timestamp>
+    // Custom URL/public_id style: algomentor_video_<problemId>_<timestamp>
     const problemId = req.body?.problemId || req.query?.problemId;
     const customPublicId = problemId && isValidObjectId(problemId)
       ? `problem_${problemId}_${timestamp}`
